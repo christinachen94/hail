@@ -2543,6 +2543,177 @@ def balding_nichols_model(n_populations, n_samples, n_variants, n_partitions=Non
                                             mixture)
     return MatrixTable(jmt)
 
+@typecheck(n_populations=int,
+           n_samples=int,
+           n_variants=int,
+           n_partitions=nullable(int),
+           pop_dist=nullable(sequenceof(numeric)),
+           fst=nullable(sequenceof(numeric)),
+           af_dist=oneof(UniformDist, BetaDist, TruncatedBetaDist),
+           seed=int,
+           reference_genome=reference_genome_type)
+def psd_model(n_populations, n_samples, n_variants, n_partitions=None,
+                          pop_dist=None, fst=None, af_dist=UniformDist(0.1, 0.9),
+                          seed=0, reference_genome='default') -> MatrixTable:
+    r"""Generate a matrix table of variants, samples, and genotypes using the
+    Pritchard-Stephens-Donnelly model.
+
+    Examples
+    --------
+    Generate a matrix table of genotypes with 1000 variants and 100 samples
+    across 3 populations:
+
+    >>> psd_ds = hl.psd_model(3, 100, 1000)
+
+    Generate a matrix table using 4 populations, 40 samples, 150 variants, 3
+    partitions, admixture proportions drawn from a Dirichlet distribution with parameters ``[0.1, 0.2, 0.3, 0.4]``,
+    :math:`F_{ST}` values ``[.02, .06, .04, .12]``, ancestral allele
+    frequencies drawn from a truncated beta distribution with ``a = 0.01`` and
+    ``b = 0.05`` over the interval ``[0.05, 1]``, and random seed 1:
+
+    >>> from hail.stats import TruncatedBetaDist
+    >>>
+    >>> psd_ds = hl.psd_model(4, 40, 150, 3,
+    ...          pop_dist=[0.1, 0.2, 0.3, 0.4],
+    ...          fst=[.02, .06, .04, .12],
+    ...          af_dist=TruncatedBetaDist(a=0.01, b=2.0, min=0.05, max=1.0),
+    ...          seed=1)
+
+    Notes
+    -----
+    This method simulates a matrix table of variants, samples, and genotypes
+    using the Pritchard-Stephens-Donnelly model, which we now define.
+
+    - :math:`K` populations are labeled by integers 0, 1, ..., K - 1.
+    - :math:`N` samples are labeled by strings 0, 1, ..., N - 1.
+    - :math:`M` variants are defined as ``1:1:A:C``, ``1:2:A:C``, ...,
+      ``1:M:A:C``.
+    - The default distribution for admixture proportions :math:`\mathcal{A}` is Dirichlet with parameters ``[1, ..., 1]`` (uniform on the unit :math:`(K-1)`-simplex).
+    - The default ancestral frequency distribution :math:`P_0` is uniform on
+      ``[0.1, 0.9]``. Other options are :class:`.UniformDist`,
+      :class:`.BetaDist`, and :class:`.TruncatedBetaDist`.
+      All three classes are located in ``hail.stats``.
+    - The default :math:`F_{ST}` values are all 0.1.
+
+    The Pritchard-Stephens-Donnelly model models each allele copy of each individual at each locus as originating from one of :math:`K` homogeneous modern populations that have
+    each diverged from a single ancestral population (a `star phylogeny`). Each
+    sample is assigned admixture proportions in each population by sampling from a Dirichlet distribution :math:`A`.  
+
+    Variants are modeled as bi-allelic and unlinked. Ancestral allele
+    frequencies are drawn independently for each variant from a frequency
+    spectrum :math:`P_0`. The extent of genetic drift of each modern population
+    from the ancestral population is defined by the corresponding :math:`F_{ST}`
+    parameter :math:`F_k` (here and below, lowercase indices run over a range
+    bounded by the corresponding uppercase parameter, e.g. :math:`k = 1, \ldots,
+    K`). For each variant and population, allele frequencies are drawn from a
+    `beta distribution <https://en.wikipedia.org/wiki/Beta_distribution>`__
+    whose parameters are determined by the ancestral allele frequency and
+    :math:`F_{ST}` parameter. The beta distribution gives a continuous
+    approximation of the effect of genetic drift. We denote sample admixture proportions by :math:`\alpha_n`, ancestral allele frequencies by :math:`p_m`,
+    population allele frequencies by :math:`p_{k, m}`, and diploid, unphased
+    genotype calls by :math:`g_{n, m}` (0, 1, and 2 correspond to homozygous
+    reference, heterozygous, and homozygous variant, respectively). 
+
+    The generative model is then given by:
+
+    .. math::
+        \alpha_n \,&\sim\, A
+
+        p_m \,&\sim\, P_0
+
+        p_{k,m} \mid p_m\,&\sim\, \mathrm{Beta}(\mu = p_m,\, \sigma^2 = F_k p_m (1 - p_m))
+
+        g_{n,m} \mid k_n, p_{k, m} \,&\sim\, \mathrm{Binomial}(2, \alpha_i \cdot p_{*, m})
+
+    The beta distribution by its mean and variance above; the usual parameters
+    are :math:`a = (1 - p) \frac{1 - F}{F}` and :math:`b = p \frac{1 - F}{F}` with
+    :math:`F = F_k` and :math:`p = p_m`.
+
+    The resulting dataset has the following fields.
+
+    Global fields:
+
+    - `n_populations` (:py:data:`.tint32`) -- Number of populations.
+    - `n_samples` (:py:data:`.tint32`) -- Number of samples.
+    - `n_variants` (:py:data:`.tint32`) -- Number of variants.
+    - `pop_dist` (:class:`.tarray` of :py:data:`.tfloat64`) -- Admixture distribution indexed by
+      population.
+    - `fst` (:class:`.tarray` of :py:data:`.tfloat64`) -- :math:`F_{ST}` values indexed by
+      population.
+    - `ancestral_af_dist` (:class:`.tstruct`) -- Description of the ancestral allele
+      frequency distribution.
+    - `seed` (:py:data:`.tint32`) -- Random seed.
+
+    Row fields:
+
+    - `locus` (:class:`.tlocus`) -- Variant locus (key field).
+    - `alleles` (:class:`.tarray` of :py:data:`.tstr`) -- Variant alleles (key field).
+    - `ancestral_af` (:py:data:`.tfloat64`) -- Ancestral allele frequency.
+    - `af` (:class:`.tarray` of :py:data:`.tfloat64`) -- Modern allele frequencies indexed by
+      population.
+
+    Column fields:
+
+    - `sample_idx` (:py:data:`.tint32`) - Sample index (key field).
+    - `pop` (:py:data:`.tint32`) -- Admixture proportions of sample.
+
+    Entry fields:
+
+    - `GT` (:py:data:`.tcall`) -- Genotype call (diploid, unphased).
+
+    Parameters
+    ----------
+    n_populations : :obj:`int`
+        Number of modern populations.
+    n_samples : :obj:`int`
+        Total number of samples.
+    n_variants : :obj:`int`
+        Number of variants.
+    n_partitions : :obj:`int`, optional
+        Number of partitions.
+        Default is 1 partition per million entries or 8, whichever is larger.
+    pop_dist : :class:`.tarray` of
+        :py:data:`.tfloat64`, optional
+        Admixture distribution, a list of length
+        ``n_populations`` with non-negative values.
+        Default is ``[1, ..., 1]``.
+    fst : :obj:`list` of :obj:`float`, optional
+        :math:`F_{ST}` values, a list of length ``n_populations`` with values
+        in (0, 1). Default is ``[0.1, ..., 0.1]``.
+    af_dist : :class:`.UniformDist` or :class:`.BetaDist` or :class:`.TruncatedBetaDist`
+        Ancestral allele frequency distribution.
+        Default is ``UniformDist(0.1, 0.9)``.
+    seed : :obj:`int`
+        Random seed.
+    reference_genome : :obj:`str` or :class:`.ReferenceGenome`
+        Reference genome to use.
+
+    Returns
+    -------
+    :class:`.MatrixTable`
+        Simulated matrix table of variants, samples, and genotypes.
+    """
+
+    if pop_dist is None:
+        jvm_pop_dist_opt = joption(pop_dist)
+    else:
+        jvm_pop_dist_opt = joption(jarray(Env.jvm().double, pop_dist))
+
+    if fst is None:
+        jvm_fst_opt = joption(fst)
+    else:
+        jvm_fst_opt = joption(jarray(Env.jvm().double, fst))
+
+    jmt = Env.hc()._jhc.baldingNicholsModel(n_populations, n_samples, n_variants,
+                                            joption(n_partitions),
+                                            jvm_pop_dist_opt,
+                                            jvm_fst_opt,
+                                            af_dist._jrep(),
+                                            seed,
+                                            reference_genome._jrep,
+                                            mixture)
+    return MatrixTable(jmt)
+
 @typecheck(mt=MatrixTable,f=anytype)
 def filter_alleles(mt: MatrixTable,
                    f: Callable) -> MatrixTable:
