@@ -2623,7 +2623,7 @@ def psd_model(n_populations, n_samples, n_variants, n_partitions=None,
 
         p_{k,m} \mid p_m\,&\sim\, \mathrm{Beta}(\mu = p_m,\, \sigma^2 = F_k p_m (1 - p_m))
 
-        g_{n,m} \mid k_n, p_{k, m} \,&\sim\, \mathrm{Binomial}(2, \alpha_i \cdot p_{*, m})
+        g_{n,m} \mid k_n, p_{k, m} \,&\sim\, \mathrm{Binomial}(2, \alpha_n \cdot p_{*, m})
 
     The beta distribution by its mean and variance above; the usual parameters
     are :math:`a = (1 - p) \frac{1 - F}{F}` and :math:`b = p \frac{1 - F}{F}` with
